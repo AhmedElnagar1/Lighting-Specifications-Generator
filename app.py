@@ -17,25 +17,23 @@ class ProcessingThread(QThread):
     progress_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool, str, str)  # success, message, pdf_path
     
-    def __init__(self, excel_file_path: str, language: str, img_dir: str):
+    def __init__(self, input_file: str, img_dir: str):
         """
         Initialize the processing thread
         
         Args:
-            excel_file_path (str): Path to the Excel file to process
-            language (str): Language code ('EN' or 'DE')
+            input_file (str): Path to the input Excel file to process
             img_dir (str): Path to the image directory
         """
         super().__init__()
-        self.excel_file_path = excel_file_path
-        self.language = language
+        self.input_file = input_file
         self.img_dir = img_dir
     
     def run(self) -> None:
         """Run the Excel processing in a separate thread"""
         try:
             self.progress_signal.emit("Starting Excel processing...")
-            result = process_excel_file(self.excel_file_path, self.language, self.img_dir)
+            result = process_excel_file(self.input_file, self.img_dir)
             
             if result and isinstance(result, str):
                 # Success - result is the PDF path
@@ -127,23 +125,6 @@ class ExcelProcessorApp(QMainWindow):
         
         main_layout.addWidget(img_group)
         
-        # Language selection group
-        language_group = QGroupBox("Language Selection")
-        language_layout = QVBoxLayout(language_group)
-        
-        self.language_combo = QComboBox()
-        self.language_combo.addItem("English", "EN")
-        self.language_combo.addItem("German", "DE")
-        self.language_combo.setStyleSheet("""
-            QComboBox {
-                padding: 8px;
-                border-radius: 5px;
-                font-size: 14px;
-            }
-        """)
-        language_layout.addWidget(self.language_combo)
-        
-        main_layout.addWidget(language_group)
         
         # Process button
         self.process_button = QPushButton("Process Excel File")
@@ -329,9 +310,6 @@ class ExcelProcessorApp(QMainWindow):
             QMessageBox.critical(self, "Error", "Selected image directory does not exist.")
             return
         
-        # Get selected language
-        language = self.language_combo.currentData()
-        
         # Disable UI elements during processing
         self.process_button.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -339,10 +317,10 @@ class ExcelProcessorApp(QMainWindow):
         
         # Clear status text
         self.status_text.clear()
-        self.log_message(f"Starting processing with language: {language}")
+        self.log_message("Starting processing...")
         
         # Create and start processing thread
-        self.processing_thread = ProcessingThread(self.selected_file_path, language, self.selected_img_dir)
+        self.processing_thread = ProcessingThread(self.selected_file_path, self.selected_img_dir)
         self.processing_thread.progress_signal.connect(self.log_message)
         self.processing_thread.finished_signal.connect(self.on_processing_finished)
         self.processing_thread.start()
