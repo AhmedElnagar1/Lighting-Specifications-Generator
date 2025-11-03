@@ -1,3 +1,5 @@
+https://burohappold.sharepoint.com/:f:/r/sites/062646/Shared%20Documents/Lighting/++LED%20Lamp%20Replacement++/05_Presentations?csf=1&web=1&e=wYFkAY
+
 # Lighting Specifications Generator
 
 A Python application that processes Excel files to generate lighting specifications with automatic PDF output. The application provides both a command-line interface and a modern PyQt6 GUI for easy file selection and processing.
@@ -200,4 +202,5 @@ If you encounter issues:
    - Check that the Excel file is not open in another application
    - Verify Excel is responding (try opening it manually)
    - Look at console output for detailed error messages
+
    - Consider using the GUI which provides better progress feedback 
