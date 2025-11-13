@@ -4,11 +4,47 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
     QWidget, QPushButton, QLabel, QFileDialog, QComboBox,
-    QProgressBar, QTextEdit, QMessageBox, QGroupBox
+    QProgressBar, QTextEdit, QMessageBox, QGroupBox, QDialog, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
-from final_excel_processor import process_excel_file
+from final_excel_processor import process_excel_file, find_template_sheets, find_decision_matrix_sheet
+from openpyxl import load_workbook
+
+
+class TemplateSelectionDialog(QDialog):
+    """Dialog for selecting a template sheet when multiple are found"""
+    
+    def __init__(self, template_sheets: list, parent=None):
+        """
+        Initialize the template selection dialog.
+        
+        Args:
+            template_sheets (list): List of template sheet names to choose from
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        self.selected_template = None
+        self.setWindowTitle("Select Template Sheet")
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        
+        label = QLabel("Multiple template sheets found. Please select one:")
+        layout.addWidget(label)
+        
+        self.combo_box = QComboBox()
+        self.combo_box.addItems(template_sheets)
+        layout.addWidget(self.combo_box)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def get_selected_template(self) -> str:
+        """Get the selected template sheet name"""
+        return self.combo_box.currentText()
 
 
 class ProcessingThread(QThread):
@@ -17,23 +53,25 @@ class ProcessingThread(QThread):
     progress_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool, str, str)  # success, message, pdf_path
     
-    def __init__(self, input_file: str, img_dir: str):
+    def __init__(self, input_file: str, img_dir: str, template_sheet_name: Optional[str] = None):
         """
         Initialize the processing thread
         
         Args:
             input_file (str): Path to the input Excel file to process
             img_dir (str): Path to the image directory
+            template_sheet_name (Optional[str]): Name of the template sheet to use
         """
         super().__init__()
         self.input_file = input_file
         self.img_dir = img_dir
+        self.template_sheet_name = template_sheet_name
     
     def run(self) -> None:
         """Run the Excel processing in a separate thread"""
         try:
             self.progress_signal.emit("Starting Excel processing...")
-            result = process_excel_file(self.input_file, self.img_dir)
+            result = process_excel_file(self.input_file, self.img_dir, self.template_sheet_name)
             
             if result and isinstance(result, str):
                 # Success - result is the PDF path
@@ -310,6 +348,43 @@ class ExcelProcessorApp(QMainWindow):
             QMessageBox.critical(self, "Error", "Selected image directory does not exist.")
             return
         
+        # Check for template sheets before processing
+        template_sheet_name = None
+        try:
+            # Load workbook to check for template sheets
+            input_wb = load_workbook(self.selected_file_path, data_only=True)
+            template_sheets = find_template_sheets(input_wb)
+            decision_matrix_sheet = find_decision_matrix_sheet(input_wb)
+            
+            if not decision_matrix_sheet:
+                QMessageBox.critical(self, "Error", "No sheet containing a cell with 'Decision Matrix' found in the Excel file.")
+                return
+            
+            if not template_sheets:
+                QMessageBox.critical(self, "Error", "No sheet containing 'Template' found in the Excel file.")
+                return
+            elif len(template_sheets) > 1:
+                # Show dialog to let user choose
+                dialog = TemplateSelectionDialog(template_sheets, self)
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    template_sheet_name = dialog.get_selected_template()
+                    self.log_message(f"Selected template sheet: {template_sheet_name}")
+                else:
+                    # User cancelled
+                    self.log_message("Template selection cancelled by user.")
+                    return
+            else:
+                # Only one template sheet found
+                template_sheet_name = template_sheets[0]
+                self.log_message(f"Found template sheet: {template_sheet_name}")
+            
+            input_wb.close()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error reading Excel file: {str(e)}")
+            self.log_message(f"Error reading Excel file: {str(e)}")
+            return
+        
         # Disable UI elements during processing
         self.process_button.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -320,7 +395,7 @@ class ExcelProcessorApp(QMainWindow):
         self.log_message("Starting processing...")
         
         # Create and start processing thread
-        self.processing_thread = ProcessingThread(self.selected_file_path, self.selected_img_dir)
+        self.processing_thread = ProcessingThread(self.selected_file_path, self.selected_img_dir, template_sheet_name)
         self.processing_thread.progress_signal.connect(self.log_message)
         self.processing_thread.finished_signal.connect(self.on_processing_finished)
         self.processing_thread.start()
