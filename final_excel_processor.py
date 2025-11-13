@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 import openpyxl
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image
@@ -403,6 +403,60 @@ def find_template_sheets(workbook) -> List[str]:
     return find_sheets_containing(workbook, "Template")
 
 
+def validate_required_sheets(workbook, template_sheet_name: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Validate that all required sheets exist in the workbook.
+    
+    Args:
+        workbook: The openpyxl workbook object
+        template_sheet_name (Optional[str]): Name of the template sheet to check. If None, will search for it.
+    
+    Returns:
+        tuple[bool, str]: (is_valid, error_message) - True if all sheets exist, False with error message otherwise
+    """
+    missing_sheets = []
+    available_sheets = workbook.sheetnames
+    
+    # Check for Cover sheet
+    cover_found = False
+    for sheet_name in available_sheets:
+        if sheet_name.lower() == "cover":
+            cover_found = True
+            break
+    if not cover_found:
+        missing_sheets.append("Cover")
+    
+    # Check for GenInfo+Contacts sheet
+    geninfo_found = False
+    for sheet_name in available_sheets:
+        if sheet_name.lower() == "geninfo+contacts":
+            geninfo_found = True
+            break
+    if not geninfo_found:
+        missing_sheets.append("GenInfo+Contacts")
+    
+    # Check for Decision Matrix sheet
+    decision_matrix_sheet = find_decision_matrix_sheet(workbook)
+    if not decision_matrix_sheet:
+        missing_sheets.append("Decision Matrix (sheet containing a cell with 'Decision Matrix')")
+    
+    # Check for Template sheet
+    if template_sheet_name:
+        if template_sheet_name not in available_sheets:
+            missing_sheets.append(f"Template sheet '{template_sheet_name}'")
+    else:
+        template_sheets = find_template_sheets(workbook)
+        if not template_sheets:
+            missing_sheets.append("Template (sheet containing 'Template' in name)")
+    
+    if missing_sheets:
+        error_msg = "The following required sheets are missing:\n"
+        error_msg += "\n".join(f"  - {sheet}" for sheet in missing_sheets)
+        return (False, error_msg)
+    
+    return (True, "")
+
+
 def find_image_cell_in_cover_sheet(workbook) -> Optional[str]:
     """
     Find the cell address containing the term "image" (case-insensitive) in the Cover sheet.
@@ -524,7 +578,7 @@ def add_cover_image(excel_file_path: str, image_path: str) -> bool:
         return False
 
 
-def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, schedule_sheet_name: str):
+def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, schedule_sheet_name: str) -> Union[List[str], str]:
     """
     Create sheets directly from Schedule sheet data using openpyxl.
     
@@ -536,15 +590,17 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
         schedule_sheet_name (str): Name of the Decision Matrix sheet to use
     
     Returns:
-        List[str] or False: List of created sheet IDs, or False on error
+        Union[List[str], str]: List of created sheet IDs on success, or error message string on error
     """
     if template_sheet_name not in input_wb.sheetnames:
-        print(f"Template sheet '{template_sheet_name}' not found")
-        return False
+        error_msg = f"Template sheet '{template_sheet_name}' not found in the workbook."
+        print(error_msg)
+        return error_msg
     
     if schedule_sheet_name not in input_wb.sheetnames:
-        print(f"Schedule sheet '{schedule_sheet_name}' not found")
-        return False
+        error_msg = f"Decision Matrix sheet '{schedule_sheet_name}' not found in the workbook."
+        print(error_msg)
+        return error_msg
     
     try:
         # Get the template sheet
@@ -692,7 +748,8 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
         return sheet_ids
         
     except Exception as e:
-        print(f"Error creating sheets: {e}")
+        error_msg = f"Error creating sheets: {str(e)}"
+        print(error_msg)
         print("Trying to save with different name...")
         
         # Try saving with a different name
@@ -704,8 +761,9 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
             print(f"Workbook saved as: {new_path}")
             return new_path
         except Exception as e2:
-            print(f"Error saving to new path: {e2}")
-            return False
+            error_msg = f"Error saving to new path: {str(e2)}"
+            print(error_msg)
+            return error_msg
 
 def map_base_data_to_template(sheet, base_row_data, option_1_row_data, option_2_row_data):
     """Map data from Decision Matrix to template fields"""
@@ -904,7 +962,7 @@ def map_base_data_to_template(sheet, base_row_data, option_1_row_data, option_2_
     except Exception as e:
         print(f"Error mapping data to template: {e}")
 
-def create_pdf(excel_file_path: str, sheet_ids: List[str]) -> Union[str, bool]:
+def create_pdf(excel_file_path: str, sheet_ids: List[str]) -> Union[str, str]:
     """
     Create PDF from all sheets using Excel COM automation.
     
@@ -913,7 +971,7 @@ def create_pdf(excel_file_path: str, sheet_ids: List[str]) -> Union[str, bool]:
         sheet_ids (List[str]): List of sheet IDs to include in PDF
     
     Returns:
-        Union[str, bool]: Path to the generated PDF file on success, or False on error
+        Union[str, str]: Path to the generated PDF file on success, or error message string on error
     """
     output_pdf = os.path.splitext(excel_file_path)[0] + "_output.pdf"
     if os.path.exists(output_pdf):
@@ -967,10 +1025,14 @@ def create_pdf(excel_file_path: str, sheet_ids: List[str]) -> Union[str, bool]:
         missing_sheets = [s for s in sheets_to_include if s not in actual_sheet_names]
         
         if missing_sheets:
-            print(f"Warning: Some sheets not found in workbook: {missing_sheets}")
+            error_msg = f"The following sheets are missing from the workbook and cannot be included in the PDF:\n"
+            error_msg += "\n".join(f"  - {sheet}" for sheet in missing_sheets)
+            print(f"Warning: {error_msg}")
+            # Still continue if we have some sheets to include
         
         if not existing_sheets_to_include:
-            raise Exception("No valid sheets found to include in PDF")
+            error_msg = "No valid sheets found to include in PDF. Please ensure the required sheets exist."
+            raise Exception(error_msg)
         
         print(f"Sheets to include in PDF: {existing_sheets_to_include}")
         
@@ -1035,7 +1097,7 @@ def create_pdf(excel_file_path: str, sheet_ids: List[str]) -> Union[str, bool]:
             raise Exception(f"PDF file was not created: {abs_output_pdf}")
         
     except Exception as e:
-        error_msg = f"Error creating PDF: {e}"
+        error_msg = f"Error creating PDF: {str(e)}"
         print(error_msg)
         import traceback
         traceback.print_exc()
@@ -1062,9 +1124,9 @@ def create_pdf(excel_file_path: str, sheet_ids: List[str]) -> Union[str, bool]:
         except:
             pass
         
-        return False
+        return error_msg
 
-def process_excel_file(input_file: str, img_dir: str, template_sheet_name: Optional[str] = None) -> Union[str, bool]:
+def process_excel_file(input_file: str, img_dir: str, template_sheet_name: Optional[str] = None) -> Union[str, str]:
     """
     Main processing function.
     
@@ -1074,7 +1136,7 @@ def process_excel_file(input_file: str, img_dir: str, template_sheet_name: Optio
         template_sheet_name (Optional[str]): Name of the template sheet to use. If None, will be auto-detected.
     
     Returns:
-        Union[str, bool]: Path to the generated PDF file on success, or False on error
+        Union[str, str]: Path to the generated PDF file on success, or error message string on error
     """
     print("Starting Excel processing and PDF creation...")
     print("=" * 50)
@@ -1087,37 +1149,52 @@ def process_excel_file(input_file: str, img_dir: str, template_sheet_name: Optio
         input_wb = load_workbook(input_file, data_only=True)  # Read only values, not formulas
         print(f"Loaded workbook: {input_file}")
     except Exception as e:
-        print(f"Error loading workbook: {e}")
-        return False
+        error_msg = f"Error loading workbook: {str(e)}"
+        print(error_msg)
+        return error_msg
 
     if input_wb is None:
-        return False
+        return "Error: Failed to load workbook"
+    
+    # Validate all required sheets exist
+    is_valid, validation_error = validate_required_sheets(input_wb, template_sheet_name)
+    if not is_valid:
+        print(validation_error)
+        input_wb.close()
+        return validation_error
     
     # Find Decision Matrix sheet (sheet containing a cell with "Decision Matrix")
     decision_matrix_sheet = find_decision_matrix_sheet(input_wb)
     if not decision_matrix_sheet:
-        print("Error: No sheet containing a cell with 'Decision Matrix' found")
-        return False
+        error_msg = "No sheet containing a cell with 'Decision Matrix' found"
+        print(f"Error: {error_msg}")
+        input_wb.close()
+        return error_msg
     print(f"Found Decision Matrix sheet: {decision_matrix_sheet}")
     
     # Find or use provided template sheet
     if template_sheet_name is None:
         template_sheets = find_template_sheets(input_wb)
         if not template_sheets:
-            print("Error: No sheet containing 'Template' found")
-            return False
+            error_msg = "No sheet containing 'Template' found"
+            print(f"Error: {error_msg}")
+            input_wb.close()
+            return error_msg
         elif len(template_sheets) == 1:
             template_sheet_name = template_sheets[0]
             print(f"Found Template sheet: {template_sheet_name}")
         else:
             # Multiple template sheets found - this should be handled by the GUI
-            print(f"Error: Multiple template sheets found: {template_sheets}")
-            print("Please select a template sheet in the GUI")
-            return False
+            error_msg = f"Multiple template sheets found: {', '.join(template_sheets)}. Please select a template sheet in the GUI."
+            print(f"Error: {error_msg}")
+            input_wb.close()
+            return error_msg
     else:
         if template_sheet_name not in input_wb.sheetnames:
-            print(f"Error: Specified template sheet '{template_sheet_name}' not found")
-            return False
+            error_msg = f"Specified template sheet '{template_sheet_name}' not found"
+            print(f"Error: {error_msg}")
+            input_wb.close()
+            return error_msg
         print(f"Using Template sheet: {template_sheet_name}")
     
     # Determine sheets to keep
@@ -1128,13 +1205,17 @@ def process_excel_file(input_file: str, img_dir: str, template_sheet_name: Optio
     
     # Create sheets
     sheet_ids = create_sheets(input_wb, img_dir, input_file, template_sheet_name, decision_matrix_sheet)
-    if not sheet_ids:
-        return False
+    if isinstance(sheet_ids, str):  # Error message returned
+        input_wb.close()
+        return sheet_ids
     
     # Create PDF
     pdf_path = create_pdf(input_file, sheet_ids)
-    if not pdf_path:
-        return False
+    if isinstance(pdf_path, str) and not pdf_path.endswith('.pdf'):  # Error message returned
+        input_wb.close()
+        return pdf_path
+    
+    input_wb.close()
     
     print("=" * 50)
     print("Processing completed successfully!")

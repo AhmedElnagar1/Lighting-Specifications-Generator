@@ -74,11 +74,15 @@ class ProcessingThread(QThread):
             result = process_excel_file(self.input_file, self.img_dir, self.template_sheet_name)
             
             if result and isinstance(result, str):
-                # Success - result is the PDF path
-                self.finished_signal.emit(True, "Processing completed successfully!", result)
+                if result.endswith('.pdf'):
+                    # Success - result is the PDF path
+                    self.finished_signal.emit(True, "Processing completed successfully!", result)
+                else:
+                    # Failure - result is an error message
+                    self.finished_signal.emit(False, result, "")
             else:
-                # Failure - result is False
-                self.finished_signal.emit(False, "Processing failed. Check the console for details.", "")
+                # Failure - result is False or None
+                self.finished_signal.emit(False, "Processing failed. An unknown error occurred.", "")
                 
         except Exception as e:
             self.finished_signal.emit(False, f"Error during processing: {str(e)}", "")
@@ -501,11 +505,20 @@ class ExcelProcessorApp(QMainWindow):
             self.open_pdf_button.setEnabled(False)
             self.pdf_path = None
         
-        # Show result dialog
+        # Show result dialog with detailed error messages
         if success:
             QMessageBox.information(self, "Success", message)
         else:
-            QMessageBox.critical(self, "Error", message)
+            # Display error message in a detailed dialog
+            error_dialog = QMessageBox(self)
+            error_dialog.setIcon(QMessageBox.Icon.Critical)
+            error_dialog.setWindowTitle("Processing Error")
+            error_dialog.setText("Processing failed with the following error:")
+            # Show error message in both main text and detailed text for better visibility
+            error_dialog.setInformativeText(message)
+            error_dialog.setDetailedText(message)
+            error_dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+            error_dialog.exec()
     
     def log_message(self, message: str) -> None:
         """Add message to status text area"""
