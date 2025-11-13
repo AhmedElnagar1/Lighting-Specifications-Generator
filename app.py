@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
-from final_excel_processor import process_excel_file, find_template_sheets, find_decision_matrix_sheet
+from final_excel_processor import process_excel_file, find_template_sheets, find_decision_matrix_sheet, add_cover_image
 from openpyxl import load_workbook
 
 
@@ -163,6 +163,24 @@ class ExcelProcessorApp(QMainWindow):
         
         main_layout.addWidget(img_group)
         
+        # Cover image group
+        cover_group = QGroupBox("Cover Image")
+        cover_layout = QVBoxLayout(cover_group)
+        
+        # Add Cover Image button
+        self.add_cover_image_button = QPushButton("Add Cover Image")
+        self.add_cover_image_button.clicked.connect(self.add_cover_image)
+        self.add_cover_image_button.setEnabled(False)
+        self.add_cover_image_button.setStyleSheet("""
+            QPushButton {
+                padding: 10px;
+                font-size: 14px;
+                border-radius: 5px;
+            }
+        """)
+        cover_layout.addWidget(self.add_cover_image_button)
+        
+        main_layout.addWidget(cover_group)
         
         # Process button
         self.process_button = QPushButton("Process Excel File")
@@ -323,12 +341,60 @@ class ExcelProcessorApp(QMainWindow):
             self.update_process_button_state()
             self.log_message(f"Image directory selected: {img_dir}")
     
+    def add_cover_image(self) -> None:
+        """Handle adding cover image to the Excel file"""
+        if not self.selected_file_path:
+            QMessageBox.warning(self, "Warning", "Please select an Excel file first.")
+            return
+        
+        if not os.path.exists(self.selected_file_path):
+            QMessageBox.critical(self, "Error", "Selected file does not exist.")
+            return
+        
+        # Open file dialog to select image
+        image_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Cover Image",
+            "",
+            "Image Files (*.jpg *.jpeg *.png *.bmp *.gif);;All Files (*)"
+        )
+        
+        if not image_path:
+            return
+        
+        if not os.path.exists(image_path):
+            QMessageBox.critical(self, "Error", "Selected image file does not exist.")
+            return
+        
+        # Disable button during processing
+        self.add_cover_image_button.setEnabled(False)
+        self.log_message("Adding cover image...")
+        
+        try:
+            # Add the image to the cover sheet
+            success = add_cover_image(self.selected_file_path, image_path)
+            
+            if success:
+                QMessageBox.information(self, "Success", "Cover image added successfully!")
+                self.log_message(f"Cover image added successfully from: {image_path}")
+            else:
+                QMessageBox.critical(self, "Error", "Failed to add cover image. Check the console for details.")
+                self.log_message("Failed to add cover image.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error adding cover image: {str(e)}")
+            self.log_message(f"Error adding cover image: {str(e)}")
+        finally:
+            # Re-enable button
+            self.add_cover_image_button.setEnabled(True)
+    
     def update_process_button_state(self) -> None:
         """Update the process button enabled state based on selections"""
         self.process_button.setEnabled(
             self.selected_file_path is not None and 
             self.selected_img_dir is not None
         )
+        # Enable Add Cover Image button if Excel file is selected
+        self.add_cover_image_button.setEnabled(self.selected_file_path is not None)
     
     def process_file(self) -> None:
         """Start processing the selected Excel file"""

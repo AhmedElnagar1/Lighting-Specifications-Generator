@@ -403,6 +403,127 @@ def find_template_sheets(workbook) -> List[str]:
     return find_sheets_containing(workbook, "Template")
 
 
+def find_image_cell_in_cover_sheet(workbook) -> Optional[str]:
+    """
+    Find the cell address containing the term "image" (case-insensitive) in the Cover sheet.
+    
+    Args:
+        workbook: The openpyxl workbook object
+    
+    Returns:
+        Optional[str]: Cell address (e.g., 'A1') containing "image", or None if not found
+    """
+    cover_sheet_name = None
+    for sheet_name in workbook.sheetnames:
+        if sheet_name.lower() == "cover":
+            cover_sheet_name = sheet_name
+            break
+    
+    if not cover_sheet_name:
+        return None
+    
+    sheet = workbook[cover_sheet_name]
+    # Search through all cells in the sheet
+    for row in sheet.iter_rows():
+        for cell in row:
+            if cell.value is not None:
+                cell_value = str(cell.value).strip()
+                if "image" in cell_value.lower():
+                    # Return cell address in Excel format (e.g., 'A1')
+                    from openpyxl.utils import get_column_letter
+                    cell_address = f"{get_column_letter(cell.column)}{cell.row}"
+                    return cell_address
+    return None
+
+
+def add_cover_image(excel_file_path: str, image_path: str) -> bool:
+    """
+    Add an image to the Cover sheet at the cell containing the term "image".
+    
+    Args:
+        excel_file_path (str): Path to the Excel file
+        image_path (str): Path to the image file to add
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Load workbook
+        workbook = load_workbook(excel_file_path)
+        
+        # Find the cell containing "image" in Cover sheet
+        cell_address = find_image_cell_in_cover_sheet(workbook)
+        if not cell_address:
+            print("Error: Could not find cell containing 'image' in Cover sheet")
+            workbook.close()
+            return False
+        
+        # Get the Cover sheet
+        cover_sheet_name = None
+        for sheet_name in workbook.sheetnames:
+            if sheet_name.lower() == "cover":
+                cover_sheet_name = sheet_name
+                break
+        
+        if not cover_sheet_name:
+            print("Error: Cover sheet not found")
+            workbook.close()
+            return False
+        
+        sheet = workbook[cover_sheet_name]
+        
+        # Remove existing images in the target cell area (if any)
+        # Check all images and remove those anchored to the target cell
+        images_to_remove = []
+        for img in list(sheet._images):  # Create a copy of the list to iterate safely
+            if hasattr(img, 'anchor') and img.anchor:
+                # Check if image anchor matches our target cell
+                anchor_str = str(img.anchor)
+                # The anchor might be a cell reference like 'A1' or a range like 'A1:A1'
+                # Check if the cell address is part of the anchor
+                if cell_address in anchor_str:
+                    images_to_remove.append(img)
+        
+        # Remove old images
+        for img in images_to_remove:
+            try:
+                sheet._images.remove(img)
+            except ValueError:
+                # Image might have already been removed
+                pass
+        
+        # Fix image orientation if needed
+        corrected_path = fix_image_orientation(image_path)
+        temp_files = []
+        if corrected_path != image_path:
+            temp_files.append(corrected_path)
+        
+        # Load and add the image
+        img = Image(corrected_path)
+        add_image_to_cell(sheet, img, cell_address)
+        
+        # Save the workbook
+        workbook.save(excel_file_path)
+        workbook.close()
+        
+        # Clean up temporary files
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception as e:
+                print(f"Warning: Could not delete temporary file {temp_file}: {e}")
+        
+        print(f"Successfully added cover image to cell {cell_address}")
+        return True
+        
+    except Exception as e:
+        print(f"Error adding cover image: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, schedule_sheet_name: str):
     """
     Create sheets directly from Schedule sheet data using openpyxl.
