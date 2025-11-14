@@ -2,12 +2,12 @@ import sys
 import os
 from typing import Optional
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
+    QApplication, QMainWindow, QVBoxLayout,
     QWidget, QPushButton, QLabel, QFileDialog, QComboBox,
     QProgressBar, QTextEdit, QMessageBox, QGroupBox, QDialog, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont
 from final_excel_processor import process_excel_file, find_template_sheets, find_decision_matrix_sheet, add_cover_image
 from openpyxl import load_workbook
 

@@ -8,7 +8,7 @@ import win32com.client
 import re
 import shutil
 from datetime import datetime
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Font
 from PIL import Image as PILImage, ImageOps                
                 
 
@@ -765,6 +765,31 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
             print(error_msg)
             return error_msg
 
+def add_hyperlink_to_cell(sheet, row: int, column: int, link_value: str) -> None:
+    """
+    Add a hyperlink to a cell with display text "Link".
+    
+    Args:
+        sheet: The openpyxl worksheet object
+        row (int): Row number (1-indexed)
+        column (int): Column number (1-indexed)
+        link_value (str): The URL or link value to add as hyperlink
+    """
+    cell = sheet.cell(row=row, column=column)
+    
+    # Check if the value looks like a URL
+    link_str = str(link_value).strip()
+    if link_str and (link_str.startswith('http://') or link_str.startswith('https://')):
+        # Set the hyperlink
+        cell.hyperlink = link_str
+        cell.value = "Link"
+        # Style the cell to look like a hyperlink (blue, underlined)
+        cell.font = Font(color="0563C1", underline="single")
+    else:
+        # If it's not a URL, just set the value as is
+        cell.value = link_value
+
+
 def map_base_data_to_template(sheet, base_row_data, option_1_row_data, option_2_row_data):
     """Map data from Decision Matrix to template fields"""
     try:
@@ -896,7 +921,7 @@ def map_base_data_to_template(sheet, base_row_data, option_1_row_data, option_2_
 
             # Product Link in C24
             if "System link" in option_1_row_data and option_1_row_data["System link"]:
-                sheet.cell(row=24, column=3).value = option_1_row_data["System link"]
+                add_hyperlink_to_cell(sheet, row=24, column=3, link_value=option_1_row_data["System link"])
 
         # Option 2 row data mapping (Column F)
         if option_2_row_data:
@@ -955,7 +980,7 @@ def map_base_data_to_template(sheet, base_row_data, option_1_row_data, option_2_
 
             # Product Link in F24
             if "System link" in option_2_row_data and option_2_row_data["System link"]:
-                sheet.cell(row=24, column=6).value = option_2_row_data["System link"]
+                add_hyperlink_to_cell(sheet, row=24, column=6, link_value=option_2_row_data["System link"])
 
         print(f"Mapped data for sheet: {sheet.title}")
         
