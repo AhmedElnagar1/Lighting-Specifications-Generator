@@ -1,13 +1,15 @@
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Union, Tuple, Any
 import openpyxl
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image
+from openpyxl.utils import get_column_letter
 import os
 import sys
 import win32com.client
 import re
 import shutil
 from datetime import datetime
+from difflib import SequenceMatcher
 from openpyxl.styles import PatternFill, Font
 from PIL import Image as PILImage, ImageOps                
                 
@@ -603,6 +605,11 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
         return error_msg
     
     try:
+        # Initialize debug file
+        _write_debug("=" * 50)
+        _write_debug(f"Starting sheet creation process at {datetime.now()}")
+        _write_debug("=" * 50)
+        
         # Get the template sheet
         template_sheet = input_wb[template_sheet_name]
         
@@ -679,7 +686,7 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
                 new_sheet.title = sheet_id
                 
                 # Map data from Decision Matrix to template fields
-                map_base_data_to_template(new_sheet, base_row, option_1_row, option_2_row)
+                map_base_data_to_template(new_sheet, base_row, option_1_row, option_2_row, schedule_sheet)
                 
                 # Add image to the sheet
                 success, temp_files = add_image_to_sheet(new_sheet, sheet_id, img_dir)
@@ -705,7 +712,7 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
                 new_sheet.title = sheet_id
                 
                 # Map data from Decision Matrix to template fields
-                map_base_data_to_template(new_sheet, base_row, option_1_row, option_2_row)
+                map_base_data_to_template(new_sheet, base_row, option_1_row, option_2_row, schedule_sheet)
                 
                 # Add image to the sheet
                 success, temp_files = add_image_to_sheet(new_sheet, sheet_id, img_dir)
@@ -734,6 +741,9 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
         print(f"Created {sheets_created} new sheets")
         print("Workbook saved successfully")
         
+        # Close debug file
+        _close_debug_file()
+        
         # Clean up temporary image files after save
         if hasattr(input_wb, '_temp_image_files'):
             for temp_file in input_wb._temp_image_files:
@@ -750,6 +760,8 @@ def create_sheets(input_wb, img_dir, input_file, template_sheet_name: str, sched
     except Exception as e:
         error_msg = f"Error creating sheets: {str(e)}"
         print(error_msg)
+        _write_debug(f"Error creating sheets: {error_msg}")
+        _close_debug_file()
         print("Trying to save with different name...")
         
         # Try saving with a different name
@@ -790,202 +802,412 @@ def add_hyperlink_to_cell(sheet, row: int, column: int, link_value: str) -> None
         cell.value = link_value
 
 
-def map_base_data_to_template(sheet, base_row_data, option_1_row_data, option_2_row_data):
-    """Map data from Decision Matrix to template fields"""
+_debug_file = None
+
+
+def _write_debug(message: str) -> None:
+    """
+    Write debug message to debug.txt file.
+    
+    Args:
+        message (str): The debug message to write
+    """
+    global _debug_file
+    if _debug_file is None:
+        # Open debug file in append mode
+        _debug_file = open("debug.txt", "w", encoding="utf-8")
+    
+    _debug_file.write(message + "\n")
+    _debug_file.flush()  # Ensure it's written immediately
+
+
+def _close_debug_file() -> None:
+    """
+    Close the debug file if it's open.
+    """
+    global _debug_file
+    if _debug_file is not None:
+        _debug_file.close()
+        _debug_file = None
+
+
+def _clean_keyword(keyword: str) -> str:
+    """
+    Clean a keyword by removing special characters like *, \n, and extra whitespace.
+    
+    Args:
+        keyword (str): The keyword to clean
+    
+    Returns:
+        str: The cleaned keyword
+    """
+    # Remove newlines and replace with space
+    cleaned = keyword.replace('\n', ' ').replace('\r', ' ')
+    # Remove asterisks and other special characters
+    cleaned = re.sub(r'[*]', '', cleaned)
+    # Remove extra whitespace and strip
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
+def _find_exact_match(keyword: str, cell_value: str) -> bool:
+    """
+    Check if a keyword exactly matches a cell value (after cleaning).
+    
+    Args:
+        keyword (str): The keyword to search for
+        cell_value (str): The cell value to search in
+    
+    Returns:
+        bool: True if exact match is found, False otherwise
+    """
+    # Clean both strings for comparison
+    keyword_clean = _clean_keyword(keyword).lower()
+    cell_clean = _clean_keyword(cell_value).lower()
+    
+    # Check exact match
+    return keyword_clean == cell_clean
+
+
+def _find_closest_match(keyword: str, cell_value: str, threshold: float = 0.85) -> bool:
+    """
+    Find if a keyword closely matches a cell value using fuzzy matching.
+    Only used when exact match is not found.
+    
+    Args:
+        keyword (str): The keyword to search for
+        cell_value (str): The cell value to search in
+        threshold (float): Similarity threshold (0.0 to 1.0), default 0.85
+    
+    Returns:
+        bool: True if a close match is found, False otherwise
+    """
+    # Clean both strings for comparison
+    keyword_clean = _clean_keyword(keyword).lower()
+    cell_clean = _clean_keyword(cell_value).lower()
+    
+    # Use SequenceMatcher for fuzzy matching
+    similarity = SequenceMatcher(None, keyword_clean, cell_clean).ratio()
+    
+    # Also check word-by-word matching
+    keyword_words = set(keyword_clean.split())
+    cell_words = set(cell_clean.split())
+    
+    # If there are common significant words (more than 2 characters)
+    significant_keyword_words = {w for w in keyword_words if len(w) > 2}
+    significant_cell_words = {w for w in cell_words if len(w) > 2}
+    
+    if significant_keyword_words and significant_cell_words:
+        common_words = significant_keyword_words.intersection(significant_cell_words)
+        if common_words:
+            # If significant words match, consider it a match
+            word_match_ratio = len(common_words) / max(len(significant_keyword_words), len(significant_cell_words))
+            if word_match_ratio >= 0.5:
+                return True
+    
+    # Return True if similarity is above threshold
+    return similarity >= threshold
+
+
+def map_base_data_to_template(sheet: "openpyxl.worksheet.worksheet.Worksheet", base_row_data: dict, option_1_row_data: dict, option_2_row_data: dict, decision_matrix_sheet: "openpyxl.worksheet.worksheet.Worksheet") -> None:
+    """
+    Map data from Decision Matrix to template fields using dynamic keyword matching.
+    
+    In the decision matrix sheet, finds the cell containing "Report Code" in the first column.
+    Extracts keywords from that row. Then:
+    1. Finds "System Description" in template sheet and fills values below all keywords in that row
+    2. Finds "Technical parameters" and fills values in Option 1/Option 2 columns based on keywords below it
+    
+    Args:
+        sheet: The openpyxl worksheet object (template sheet)
+        base_row_data (dict): Dictionary containing base row data from decision matrix
+        option_1_row_data (dict): Dictionary containing option 1 row data from decision matrix
+        option_2_row_data (dict): Dictionary containing option 2 row data from decision matrix
+        decision_matrix_sheet: The openpyxl worksheet object for the decision matrix sheet
+    """
+    _write_debug(f"Option 1 row data: {option_1_row_data}")
+    _write_debug(f"Option 2 row data: {option_2_row_data}")
     try:
-        # Map specific fields to exact cell locations as requested
+        # Step 1: Find "Report Code" in the first column of decision matrix sheet
+        report_code_row = None
+        for row_num in range(1, decision_matrix_sheet.max_row + 1):
+            cell_value = decision_matrix_sheet.cell(row=row_num, column=1).value
+            if cell_value is not None:
+                cell_value_str = str(cell_value).strip()
+                if "Report Code" in cell_value_str:
+                    report_code_row = row_num
+                    break
         
-        # System Description in A3
-        if "System Description" in base_row_data and base_row_data["System Description"]:
-            sheet.cell(row=3, column=1).value = base_row_data["System Description"]
+        if report_code_row is None:
+            _write_debug("Warning: Could not find 'Report Code' in first column of decision matrix sheet")
+            return
         
-        # Manufacturer/Type in C3
-        if "Manufacturer / Type" in base_row_data and base_row_data["Manufacturer / Type"]:
-            sheet.cell(row=3, column=3).value = base_row_data["Manufacturer / Type"]
+        # Step 2: Extract keywords from that row (all cell values in that row)
+        keywords = []
+        keywords_original = []  # Keep original for data lookup
+        for col_num in range(1, decision_matrix_sheet.max_column + 1):
+            cell_value = decision_matrix_sheet.cell(row=report_code_row, column=col_num).value
+            if cell_value is not None:
+                keyword_original = str(cell_value).strip()
+                if keyword_original:  # Only add non-empty keywords
+                    # Clean the keyword for matching, but keep original for data lookup
+                    keyword_cleaned = _clean_keyword(keyword_original)
+                    keywords.append(keyword_cleaned)
+                    keywords_original.append(keyword_original)
         
-        # Assessed Condition in D3
-        if "Assessed Condition" in base_row_data and base_row_data["Assessed Condition"]:
-            sheet.cell(row=3, column=4).value = base_row_data["Assessed Condition"]
-            if "1" in base_row_data["Assessed Condition"]:
-                # Fill cell with RGB(0,230,104) - Green
-                fill = PatternFill(start_color="00E668", end_color="00E668", fill_type="solid")
-                sheet.cell(row=3, column=4).fill = fill
-            elif "2" in base_row_data["Assessed Condition"]:
-                # Fill cell with RGB(186,225,143) - Light Green
-                fill = PatternFill(start_color="BAE18F", end_color="BAE18F", fill_type="solid")
-                sheet.cell(row=3, column=4).fill = fill
-            elif "3" in base_row_data["Assessed Condition"]:
-                # Fill cell with RGB(247,199,172) - Light Orange
-                fill = PatternFill(start_color="F7C7AC", end_color="F7C7AC", fill_type="solid")
-                sheet.cell(row=3, column=4).fill = fill
-            elif "4" in base_row_data["Assessed Condition"]:
-                # Fill cell with RGB(241,169,131) - Orange
-                fill = PatternFill(start_color="F1A983", end_color="F1A983", fill_type="solid")
-                sheet.cell(row=3, column=4).fill = fill
-            elif "5" in base_row_data["Assessed Condition"]:
-                # Fill cell with RGB(255,113,113) - Red
-                fill = PatternFill(start_color="FF7171", end_color="FF7171", fill_type="solid")
-                sheet.cell(row=3, column=4).fill = fill
-
+        _write_debug(f"Found keywords from decision matrix row {report_code_row}: {keywords_original}")
         
-        # Current Light Technology in F3
-        if "Current Light Technology" in base_row_data and base_row_data["Current Light Technology"]:
-            sheet.cell(row=3, column=6).value = base_row_data["Current Light Technology"]
+        # Step 3: Find "System Description" in template sheet
+        system_description_row = None
+        system_description_col = None
+        for row_num in range(1, sheet.max_row + 1):
+            for col_num in range(1, sheet.max_column + 1):
+                cell_value = sheet.cell(row=row_num, column=col_num).value
+                if cell_value is not None:
+                    cell_value_str = str(cell_value).strip()
+                    if "System Description" in cell_value_str:
+                        system_description_row = row_num
+                        system_description_col = col_num
+                        break
+            if system_description_row is not None:
+                break
         
-        # Lamp Fitting in G3
-        if "Lamp Fitting" in base_row_data and base_row_data["Lamp Fitting"]:
-            sheet.cell(row=3, column=7).value = base_row_data["Lamp Fitting"]
+        # Step 4: For all keywords found in the System Description row, fill values below them
+        if system_description_row is not None:
+            # Find all keywords in that row
+            for col_num in range(1, sheet.max_column + 1):
+                cell_value = sheet.cell(row=system_description_row, column=col_num).value
+                if cell_value is not None:
+                    cell_value_str = str(cell_value).strip()
+                    # Check if this cell contains any of our keywords - try exact match first, then fuzzy matching
+                    matched_keyword = None
+                    matched_keyword_original = None
+                    
+                    # First, try exact match
+                    for i, keyword_cleaned in enumerate(keywords):
+                        keyword_original = keywords_original[i]
+                        if _find_exact_match(keyword_cleaned, cell_value_str):
+                            matched_keyword = keyword_cleaned
+                            matched_keyword_original = keyword_original
+                            _write_debug(f"Exact match found: '{keyword_original}' in cell at row {system_description_row}, column {col_num}")
+                            break
+                    
+                    # If no exact match, try fuzzy matching
+                    if matched_keyword is None:
+                        best_match_score = 0.0
+                        for i, keyword_cleaned in enumerate(keywords):
+                            keyword_original = keywords_original[i]
+                            if _find_closest_match(keyword_cleaned, cell_value_str):
+                                # Calculate similarity score
+                                keyword_clean = _clean_keyword(keyword_cleaned).lower()
+                                cell_clean = _clean_keyword(cell_value_str).lower()
+                                similarity = SequenceMatcher(None, keyword_clean, cell_clean).ratio()
+                                
+                                if similarity > best_match_score:
+                                    best_match_score = similarity
+                                    matched_keyword = keyword_cleaned
+                                    matched_keyword_original = keyword_original
+                        
+                        if matched_keyword is not None:
+                            _write_debug(f"Fuzzy match found: '{matched_keyword_original}' (similarity: {best_match_score:.2f}) in cell at row {system_description_row}, column {col_num}")
+                    
+                    # If we found a match (exact or fuzzy), place the value
+                    if matched_keyword_original is not None:
+                        # Get value from base_row_data using original keyword (prioritize base data for System Description row)
+                        value_to_place = None
+                        if matched_keyword_original in base_row_data and base_row_data[matched_keyword_original] is not None:
+                            value_to_place = base_row_data[matched_keyword_original]
+                        elif matched_keyword_original in option_1_row_data and option_1_row_data[matched_keyword_original] is not None:
+                            value_to_place = option_1_row_data[matched_keyword_original]
+                        elif matched_keyword_original in option_2_row_data and option_2_row_data[matched_keyword_original] is not None:
+                            value_to_place = option_2_row_data[matched_keyword_original]
+                        
+                        # Place value in cell below the keyword
+                        if value_to_place is not None:
+                            target_row = system_description_row + 1
+                            _place_value_in_cell(sheet, target_row, col_num, matched_keyword_original, value_to_place)
         
-        # Socket in H3
-        if "Socket" in base_row_data and base_row_data["Socket"]:
-            sheet.cell(row=3, column=8).value = base_row_data["Socket"]
+        # Step 5: Find "Technical parameters" (or "Technical paramaters") in template sheet
+        technical_params_row = None
+        technical_params_col = None
+        for row_num in range(1, sheet.max_row + 1):
+            for col_num in range(1, sheet.max_column + 1):
+                cell_value = sheet.cell(row=row_num, column=col_num).value
+                if cell_value is not None:
+                    cell_value_str = str(cell_value).strip()
+                    if "Technical Parameters" in cell_value_str or "Technical paramaters" in cell_value_str:
+                        technical_params_row = row_num
+                        technical_params_col = col_num
+                        col_letter = get_column_letter(col_num)
+                        _write_debug(f"Found 'Technical parameters' at cell {col_letter}{row_num} (row {row_num}, column {col_num})")
+                        break
+            if technical_params_row is not None:
+                break
         
-        # Quantity in Space in I3
-        if "System Quantity in Space" in base_row_data and base_row_data["System Quantity in Space"]:
-            sheet.cell(row=3, column=9).value = base_row_data["System Quantity in Space"]
+        if technical_params_row is None:
+            _write_debug("Warning - 'Technical parameters' cell not found")
         
-        # Level in K3
-        if "Level" in base_row_data and base_row_data["Level"]:
-            sheet.cell(row=3, column=11).value = base_row_data["Level"]
+        # Step 6: Find columns containing "Option 1" and "Option 2"
+        option_1_col = None
+        option_2_col = None
+        option_1_row = None
+        option_2_row = None
+        for row_num in range(1, sheet.max_row + 1):
+            for col_num in range(1, sheet.max_column + 1):
+                cell_value = sheet.cell(row=row_num, column=col_num).value
+                if cell_value is not None:
+                    cell_value_str = str(cell_value).strip()
+                    if "Option 1" in cell_value_str and option_1_col is None:
+                        option_1_col = col_num
+                        option_1_row = row_num
+                        col_letter = get_column_letter(col_num)
+                        _write_debug(f"Found 'Option 1' at cell {col_letter}{row_num} (row {row_num}, column {col_num})")
+                        _write_debug(f"Option 1 column number: {col_num}, row number: {row_num}")
+                    if "Option 2" in cell_value_str and option_2_col is None:
+                        option_2_col = col_num
+                        option_2_row = row_num
+                        col_letter = get_column_letter(col_num)
+                        _write_debug(f"Found 'Option 2' at cell {col_letter}{row_num} (row {row_num}, column {col_num})")
+                        _write_debug(f"Option 2 column number: {col_num}, row number: {row_num}")
+                if option_1_col is not None and option_2_col is not None:
+                    break
+            if option_1_col is not None and option_2_col is not None:
+                break
         
-        # Room No. in L3
-        if "Room No." in base_row_data and base_row_data["Room No."]:
-            sheet.cell(row=3, column=12).value = base_row_data["Room No."]
+        if option_1_col is None:
+            _write_debug("Warning - 'Option 1' column not found")
+        if option_2_col is None:
+            _write_debug("Warning - 'Option 2' column not found")
         
-        # Room Name in M3
-        if "Room Name" in base_row_data and base_row_data["Room Name"]:
-            sheet.cell(row=3, column=13).value = base_row_data["Room Name"]
+        # Step 7: Search for all cells below "Technical parameters" in the same column
+        # For each keyword found, fill value in corresponding row in Option 1 or Option 2 column
+        if technical_params_row is not None and technical_params_col is not None:
+            # Search all cells below Technical parameters in that column
+            for row_num in range(technical_params_row + 1, sheet.max_row + 1):
+                cell_value = sheet.cell(row=row_num, column=technical_params_col).value
+                if cell_value is not None:
+                    cell_value_str = str(cell_value).strip()
+                    # Check if this cell contains any of our keywords - try exact match first, then fuzzy matching
+                    matched_keyword = None
+                    matched_keyword_original = None
+                    
+                    # First, try exact match
+                    for i, keyword_cleaned in enumerate(keywords):
+                        keyword_original = keywords_original[i]
+                        if _find_exact_match(keyword_cleaned, cell_value_str):
+                            matched_keyword = keyword_cleaned
+                            matched_keyword_original = keyword_original
+                            _write_debug(f"Exact match found: '{keyword_original}' in Technical Parameters at row {row_num}, column {technical_params_col}")
+                            break
+                    
+                    # If no exact match, try fuzzy matching
+                    if matched_keyword is None:
+                        best_match_score = 0.0
+                        for i, keyword_cleaned in enumerate(keywords):
+                            keyword_original = keywords_original[i]
+                            if _find_closest_match(keyword_cleaned, cell_value_str):
+                                # Calculate similarity score
+                                keyword_clean = _clean_keyword(keyword_cleaned).lower()
+                                cell_clean = _clean_keyword(cell_value_str).lower()
+                                similarity = SequenceMatcher(None, keyword_clean, cell_clean).ratio()
+                                
+                                if similarity > best_match_score:
+                                    best_match_score = similarity
+                                    matched_keyword = keyword_cleaned
+                                    matched_keyword_original = keyword_original
+                        
+                        if matched_keyword is not None:
+                            _write_debug(f"Fuzzy match found: '{matched_keyword_original}' (similarity: {best_match_score:.2f}) in Technical Parameters at row {row_num}, column {technical_params_col}")
+                    
+                    # If we found a match (exact or fuzzy), place the value
+                    if matched_keyword_original is not None:
+                        # Determine which option column to use
+                        # Check if keyword exists in option_1_row_data or option_2_row_data using original keyword
+                        _write_debug(f"Checking data sources for keyword: '{matched_keyword_original}'")
+                        _write_debug(f"  - In option_1_row_data: {matched_keyword_original in option_1_row_data}")
+                        _write_debug(f"  - In option_2_row_data: {matched_keyword_original in option_2_row_data}")
+                        _write_debug(f"  - In base_row_data: {matched_keyword_original in base_row_data}")
+                        
+                        # Check Option 1 data
+                        if matched_keyword_original in option_1_row_data and option_1_row_data[matched_keyword_original] is not None:
+                            value_to_place = option_1_row_data[matched_keyword_original]
+                            if option_1_col is not None:
+                                _write_debug(f"  - Placing Option 1 value in column {option_1_col}, row {row_num}")
+                                _place_value_in_cell(sheet, row_num, option_1_col, matched_keyword_original, value_to_place)
+                            else:
+                                _write_debug(f"  - Warning: Option 1 column is None, cannot place value")
+                        
+                        # Check Option 2 data (separate check, not elif, so both can be placed)
+                        if matched_keyword_original in option_2_row_data and option_2_row_data[matched_keyword_original] is not None:
+                            value_to_place = option_2_row_data[matched_keyword_original]
+                            if option_2_col is not None:
+                                _write_debug(f"  - Placing Option 2 value in column {option_2_col}, row {row_num}")
+                                _place_value_in_cell(sheet, row_num, option_2_col, matched_keyword_original, value_to_place)
+                            else:
+                                _write_debug(f"  - Warning: Option 2 column is None, cannot place value")
+                        
+                        # If not in option data, try base data and use Option 1 column as default
+                        if (matched_keyword_original not in option_1_row_data or option_1_row_data.get(matched_keyword_original) is None) and \
+                           (matched_keyword_original not in option_2_row_data or option_2_row_data.get(matched_keyword_original) is None):
+                            if matched_keyword_original in base_row_data and base_row_data[matched_keyword_original] is not None:
+                                value_to_place = base_row_data[matched_keyword_original]
+                                if option_1_col is not None:
+                                    _write_debug(f"  - Placing base data value in Option 1 column {option_1_col}, row {row_num}")
+                                    _place_value_in_cell(sheet, row_num, option_1_col, matched_keyword_original, value_to_place)
+                                else:
+                                    _write_debug(f"  - Warning: Option 1 column is None, cannot place base data value")
         
-        # Luminaire Type in P3
-        if "Luminaire Type" in base_row_data and base_row_data["Luminaire Type"]:
-            sheet.cell(row=3, column=16).value = base_row_data["Luminaire Type"]
-        
-        # Notes in K16
-        if "Notes" in base_row_data and base_row_data["Notes"]:
-            sheet.cell(row=16, column=11).value = base_row_data["Notes"]
-        
-        # Option 1 row data mapping (Column C)
-        if option_1_row_data:
-            # Technical Specification in C8
-            if "Technical Specification" in option_1_row_data and option_1_row_data["Technical Specification"]:
-                sheet.cell(row=8, column=3).value = option_1_row_data["Technical Specification"]
-            
-            # Recommended Additional Services in C9
-            if "Recommended Additional services" in option_1_row_data and option_1_row_data["Recommended Additional services"]:
-                sheet.cell(row=9, column=3).value = option_1_row_data["Recommended Additional services"]
-            
-            # Sustainability Considerations in C11
-            if "Sustainability Considerations" in option_1_row_data and option_1_row_data["Sustainability Considerations"]:
-                sheet.cell(row=11, column=3).value = option_1_row_data["Sustainability Considerations"]
-            
-            # Anticipated Risks in C12
-            if "Anticipated Risks" in option_1_row_data and option_1_row_data["Anticipated Risks"]:
-                sheet.cell(row=12, column=3).value = option_1_row_data["Anticipated Risks"]
-            
-            # System Power Consumption in C16
-            if "System Power Consumption" in option_1_row_data and option_1_row_data["System Power Consumption"]:
-                power_value = option_1_row_data["System Power Consumption"]
-                # Format as "XX W" if it's a number, otherwise keep as is
-                if isinstance(power_value, (int, float)) and power_value != 0:
-                    sheet.cell(row=16, column=3).value = f"{power_value} W"
-                else:
-                    sheet.cell(row=16, column=3).value = power_value
-            
-            # Estimated energy saving in C17
-            if "Estimated Energy Saving" in option_1_row_data and option_1_row_data["Estimated Energy Saving"]:
-                sheet.cell(row=17, column=3).value = option_1_row_data["Estimated Energy Saving"]
-            
-            # System Rated Life Time in C18
-            if "System Rated Life Time" in option_1_row_data and option_1_row_data["System Rated Life Time"]:
-                sheet.cell(row=18, column=3).value = option_1_row_data["System Rated Life Time"]
-            
-            # Expected Maintenance Cycle in C19
-            if "Expected Maintenance Cycle*" in option_1_row_data and option_1_row_data["Expected Maintenance Cycle*"]:
-                sheet.cell(row=19, column=3).value = option_1_row_data["Expected Maintenance Cycle*"]
-            
-            # Warranty in C20
-            if "Warranty" in option_1_row_data and option_1_row_data["Warranty"]:
-                sheet.cell(row=20, column=3).value = option_1_row_data["Warranty"]
-            
-            # Delivery Time in C21
-            if "Delivery Time" in option_1_row_data and option_1_row_data["Delivery Time"]:
-                sheet.cell(row=21, column=3).value = option_1_row_data["Delivery Time"]
-            
-            # Cost per System in C22
-            if "Cost per System" in option_1_row_data and option_1_row_data["Cost per System"]:
-                sheet.cell(row=22, column=3).value = option_1_row_data["Cost per System"]
-            
-            # Estimated Total Systems Cost incl. Mounting per Room in C23
-            if "Estimated Total Systems Cost incl. \nMounting per Room" in option_1_row_data and option_1_row_data["Estimated Total Systems Cost incl. \nMounting per Room"]:
-                sheet.cell(row=23, column=3).value = option_1_row_data["Estimated Total Systems Cost incl. \nMounting per Room"]
-
-            # Product Link in C24
-            if "System link" in option_1_row_data and option_1_row_data["System link"]:
-                add_hyperlink_to_cell(sheet, row=24, column=3, link_value=option_1_row_data["System link"])
-
-        # Option 2 row data mapping (Column F)
-        if option_2_row_data:
-            # Technical Specification in F8
-            if "Technical Specification" in option_2_row_data and option_2_row_data["Technical Specification"]:
-                sheet.cell(row=8, column=6).value = option_2_row_data["Technical Specification"]
-            
-            # Recommended Additional Services in F9
-            if "Recommended Additional services" in option_2_row_data and option_2_row_data["Recommended Additional services"]:
-                sheet.cell(row=9, column=6).value = option_2_row_data["Recommended Additional services"]
-            
-            # Sustainability Considerations in F11
-            if "Sustainability Considerations" in option_2_row_data and option_2_row_data["Sustainability Considerations"]:
-                sheet.cell(row=11, column=6).value = option_2_row_data["Sustainability Considerations"]
-            
-            # Anticipated Risks in F12
-            if "Anticipated Risks" in option_2_row_data and option_2_row_data["Anticipated Risks"]:
-                sheet.cell(row=12, column=6).value = option_2_row_data["Anticipated Risks"]
-            
-            # System Power Consumption in F16
-            if "System Power Consumption" in option_2_row_data and option_2_row_data["System Power Consumption"]:
-                power_value = option_2_row_data["System Power Consumption"]
-                # Format as "XX W" if it's a number, otherwise keep as is
-                if isinstance(power_value, (int, float)) and power_value != 0:
-                    sheet.cell(row=16, column=6).value = f"{power_value} W"
-                else:
-                    sheet.cell(row=16, column=6).value = power_value
-            
-            # Estimated energy saving in F17
-            if "Estimated Energy Saving" in option_2_row_data and option_2_row_data["Estimated Energy Saving"]:
-                sheet.cell(row=17, column=6).value = option_2_row_data["Estimated Energy Saving"]
-            
-            # System Rated Life Time in F18
-            if "System Rated Life Time" in option_2_row_data and option_2_row_data["System Rated Life Time"]:
-                sheet.cell(row=18, column=6).value = option_2_row_data["System Rated Life Time"]
-            
-            # Expected Maintenance Cycle in F19
-            if "Expected Maintenance Cycle*" in option_2_row_data and option_2_row_data["Expected Maintenance Cycle*"]:
-                sheet.cell(row=19, column=6).value = option_2_row_data["Expected Maintenance Cycle*"]
-            
-            # Warranty in F20
-            if "Warranty" in option_2_row_data and option_2_row_data["Warranty"]:
-                sheet.cell(row=20, column=6).value = option_2_row_data["Warranty"]
-            
-            # Delivery Time in F21
-            if "Delivery Time" in option_2_row_data and option_2_row_data["Delivery Time"]:
-                sheet.cell(row=21, column=6).value = option_2_row_data["Delivery Time"]
-            
-            # Cost per System in F22
-            if "Cost per System" in option_2_row_data and option_2_row_data["Cost per System"]:
-                sheet.cell(row=22, column=6).value = option_2_row_data["Cost per System"]
-            
-            # Estimated Total Systems Cost incl. Mounting per Room in F23
-            if "Estimated Total Systems Cost incl. \nMounting per Room" in option_2_row_data and option_2_row_data["Estimated Total Systems Cost incl. \nMounting per Room"]:
-                sheet.cell(row=23, column=6).value = option_2_row_data["Estimated Total Systems Cost incl. \nMounting per Room"]
-
-            # Product Link in F24
-            if "System link" in option_2_row_data and option_2_row_data["System link"]:
-                add_hyperlink_to_cell(sheet, row=24, column=6, link_value=option_2_row_data["System link"])
-
-        print(f"Mapped data for sheet: {sheet.title}")
+        _write_debug(f"Mapped data for sheet: {sheet.title}")
         
     except Exception as e:
-        print(f"Error mapping data to template: {e}")
+        _write_debug(f"Error mapping data to template: {e}")
+        import traceback
+        error_trace = traceback.format_exc()
+        _write_debug(error_trace)
+
+
+def _place_value_in_cell(sheet: "openpyxl.worksheet.worksheet.Worksheet", row: int, col: int, keyword: str, value: Any) -> None:
+    """
+    Place a value in a cell with appropriate formatting based on the keyword.
+    
+    Args:
+        sheet: The openpyxl worksheet object
+        row (int): Row number (1-indexed)
+        col (int): Column number (1-indexed)
+        keyword (str): The keyword associated with this value
+        value (any): The value to place in the cell
+    """
+    # Handle special formatting for certain fields
+    if keyword == "Assessed Condition" and isinstance(value, str):
+        sheet.cell(row=row, column=col).value = value
+        # Apply color coding
+        if "1" in value:
+            fill = PatternFill(start_color="00E668", end_color="00E668", fill_type="solid")
+            sheet.cell(row=row, column=col).fill = fill
+        elif "2" in value:
+            fill = PatternFill(start_color="BAE18F", end_color="BAE18F", fill_type="solid")
+            sheet.cell(row=row, column=col).fill = fill
+        elif "3" in value:
+            fill = PatternFill(start_color="F7C7AC", end_color="F7C7AC", fill_type="solid")
+            sheet.cell(row=row, column=col).fill = fill
+        elif "4" in value:
+            fill = PatternFill(start_color="F1A983", end_color="F1A983", fill_type="solid")
+            sheet.cell(row=row, column=col).fill = fill
+        elif "5" in value:
+            fill = PatternFill(start_color="FF7171", end_color="FF7171", fill_type="solid")
+            sheet.cell(row=row, column=col).fill = fill
+    elif keyword == "System Power Consumption":
+        # Format as "XX W" if it's a number
+        if isinstance(value, (int, float)) and value != 0:
+            sheet.cell(row=row, column=col).value = f"{value} W"
+        else:
+            sheet.cell(row=row, column=col).value = value
+    elif keyword == "System link":
+        # Handle hyperlinks
+        add_hyperlink_to_cell(sheet, row=row, column=col, link_value=value)
+    else:
+        sheet.cell(row=row, column=col).value = value
+    _write_debug(f"Placed value for '{keyword}' at row {row}, column {col}")
 
 def create_pdf(excel_file_path: str, sheet_ids: List[str]) -> Union[str, str]:
     """
