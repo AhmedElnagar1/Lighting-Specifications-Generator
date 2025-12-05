@@ -1079,6 +1079,25 @@ def map_base_data_to_template(sheet: "openpyxl.worksheet.worksheet.Worksheet", b
         if option_2_col is None:
             _write_debug("Warning - 'Option 2' column not found")
         
+        # Place "Option Name" values directly below "Option 1" and "Option 2" cells
+        if option_1_row is not None and option_1_col is not None:
+            if "Option Name" in option_1_row_data and option_1_row_data["Option Name"] is not None:
+                option_name_1 = option_1_row_data["Option Name"]
+                target_row = option_1_row + 1
+                _write_debug(f"Placing Option 1 Name '{option_name_1}' at row {target_row}, column {option_1_col}")
+                sheet.cell(row=target_row, column=option_1_col).value = option_name_1
+            else:
+                _write_debug("Warning - 'Option Name' not found in option_1_row_data")
+        
+        if option_2_row is not None and option_2_col is not None:
+            if "Option Name" in option_2_row_data and option_2_row_data["Option Name"] is not None:
+                option_name_2 = option_2_row_data["Option Name"]
+                target_row = option_2_row + 1
+                _write_debug(f"Placing Option 2 Name '{option_name_2}' at row {target_row}, column {option_2_col}")
+                sheet.cell(row=target_row, column=option_2_col).value = option_name_2
+            else:
+                _write_debug("Warning - 'Option Name' not found in option_2_row_data")
+        
         # Step 7: Search for all cells below "Technical parameters" in the same column
         # For each keyword found, fill value in corresponding row in Option 1 or Option 2 column
         if technical_params_row is not None and technical_params_col is not None:
@@ -1474,7 +1493,7 @@ def process_excel_file(input_file: str, img_dir: str, template_sheet_name: Optio
 
 
 if __name__ == "__main__":
-    input_file = r"C:\Users\aelnagar\Documents\GitHub\Lighting-Specifications-Generator\0062646_Microsoft Berlin_UdL_Decision Matrix_v.02.xlsx"
-    img_dir = r"C:\Users\aelnagar\Buro Happold\0062646 Microsoft Berlin - 05_Presentations\Specifications"
+    input_file = r"C:\Users\vmylavarapu\Buro Happold\Germany Computational Team - General\3 Development\5 Lighting\Lighting Decision Matrix Report Generator\0062646_Microsoft Berlin_UdL_Decision Matrix_v.03_backup_20251113_141141 - Copy - Copy.xlsx"
+    img_dir = r"C:\Users\vmylavarapu\Buro Happold\Germany Computational Team - General\3 Development\5 Lighting\Lighting Decision Matrix Report Generator\Specifications"
     #excel_file = r"C:\Users\aelnagar\Downloads\Lighting Computational Development\Bauphase.xlsm"
     process_excel_file(input_file, img_dir) 
